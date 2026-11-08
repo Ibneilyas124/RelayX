@@ -11,6 +11,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -23,6 +27,22 @@ import com.ibneilyas.home.data.HomeGeo
 class GeoPollService : Service() {
     private var wasInside = true
     private val handler = Handler(Looper.getMainLooper())
+    private var netCb: ConnectivityManager.NetworkCallback? = null
+    private fun watchNet() {
+        if (netCb != null) return
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val cb = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    handler.post { HomeGeo.retryPending(this@GeoPollService, "network") }
+                }
+            }
+            cm.registerNetworkCallback(NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), cb)
+            netCb = cb
+        } catch (e: Exception) {
+            HomeGeo.glog(this, "poll: net watch err " + (e.message ?: "?"))
+        }
+    }
     private val poll = object : Runnable {
         override fun run() {
             checkLocation()
@@ -33,6 +53,7 @@ class GeoPollService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startFg()
         wasInside = true
+        watchNet()
         handler.removeCallbacks(poll)
         handler.post(poll)
         HomeGeo.glog(this, "poll: started")
@@ -40,6 +61,8 @@ class GeoPollService : Service() {
     }
     override fun onDestroy() {
         handler.removeCallbacks(poll)
+        try { netCb?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it) } } catch (e: Exception) { }
+        netCb = null
         HomeGeo.glog(this, "poll: stopped")
         super.onDestroy()
     }
@@ -75,6 +98,7 @@ class GeoPollService : Service() {
                         HomeGeo.glog(this, "poll: entered, trigger scene")
                         HomeGeo.notifyArrived(this)
                     }
+                    if (inside) HomeGeo.retryPending(this, "poll")
                     wasInside = inside
                 }
                 .addOnFailureListener { e ->

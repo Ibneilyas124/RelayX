@@ -134,6 +134,36 @@ object HomeGeo {
     fun setAuto(ctx: Context, v: Boolean) { sp(ctx).edit().putBoolean("auto", v).apply() }
     fun clearLast(ctx: Context) { sp(ctx).edit().remove("last").apply() }
 
+    // Arrival par scene fail ho to 20 minute tak dobara koshish ka nishan
+    fun pendingActive(ctx: Context): Boolean {
+        val t = sp(ctx).getLong("pend", 0L)
+        if (t <= 0L) return false
+        if (System.currentTimeMillis() - t > 20L * 60L * 1000L) {
+            sp(ctx).edit().remove("pend").apply()
+            glog(ctx, "retry: window over")
+            return false
+        }
+        return true
+    }
+
+    fun setPending(ctx: Context) {
+        if (!pendingActive(ctx)) {
+            sp(ctx).edit().putLong("pend", System.currentTimeMillis()).apply()
+            glog(ctx, "retry: pending set (20 min)")
+        }
+    }
+
+    fun clearPending(ctx: Context) { sp(ctx).edit().remove("pend").apply() }
+
+    fun retryPending(ctx: Context, why: String) {
+        if (!pendingActive(ctx)) return
+        if (GeoRunService.running) return
+        val c = load(ctx) ?: return
+        if (!c.enabled || !isAuto(ctx)) return
+        glog(ctx, "retry: starting scene again (" + why + ")")
+        if (!GeoRunService.start(ctx)) glog(ctx, "retry: could not start service")
+    }
+
     fun justRegistered(ctx: Context): Boolean {
         val t = sp(ctx).getLong("regat", 0L)
         return t > 0L && System.currentTimeMillis() - t < 15000L

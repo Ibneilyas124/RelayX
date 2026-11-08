@@ -30,6 +30,7 @@ class GeoRunService : Service() {
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        running = false
         scope.cancel()
         super.onDestroy()
     }
@@ -45,16 +46,23 @@ class GeoRunService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (running) { HomeGeo.glog(this, "service: already running"); return START_NOT_STICKY }
+        running = true
+        val wasPending = HomeGeo.pendingActive(this)
         scope.launch {
             var ok = false
             try { ok = withTimeout(45000L) { runScene() } } catch (e: Exception) { ok = false }
             HomeGeo.glog(this@GeoRunService, "service: scene " + (if (ok) "ran" else "failed or no device online"))
-            if (!ok) {
+            running = false
+            if (ok) HomeGeo.clearPending(this@GeoRunService)
+            if (!ok && wasPending) HomeGeo.glog(this@GeoRunService, "service: retry failed, will try again")
+            if (!ok && !wasPending) HomeGeo.setPending(this@GeoRunService)
+            if (!ok && !wasPending) {
                 HomeGeo.clearLast(this@GeoRunService)
                 HomeGeo.notifyArrived(this@GeoRunService, false)
             }
             stopForeground(Service.STOP_FOREGROUND_REMOVE)
-            stopSelf(startId)
+            stopSelf()
         }
         return START_NOT_STICKY
     }
@@ -106,6 +114,7 @@ class GeoRunService : Service() {
     }
 
     companion object {
+        @Volatile var running = false
         fun start(ctx: Context): Boolean = try {
             ctx.startForegroundService(Intent(ctx, GeoRunService::class.java))
             true
